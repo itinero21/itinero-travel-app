@@ -20,6 +20,9 @@ export default function AddItineraryPage() {
   })
   const [photoUrls, setPhotoUrls] = useState<string[]>([''])
   const [links, setLinks] = useState<string[]>([''])
+  const [days, setDays] = useState<Array<{ title: string; activities: string[] }>>([
+    { title: 'Day 1', activities: [''] }
+  ])
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
 
@@ -54,22 +57,45 @@ export default function AddItineraryPage() {
       const validPhotos = photoUrls.filter(url => url.trim() !== '')
       const validLinks = links.filter(link => link.trim() !== '')
 
-      const { error} = await supabase.from('itineraries').insert([
-        {
-          user_id: user.id,
-          title: formData.title,
-          description: formData.description,
-          destination: formData.destination,
-          start_date: formData.start_date || null,
-          end_date: formData.end_date || null,
-          recommendations: formData.recommendations || null,
-          photos: validPhotos.length > 0 ? validPhotos : null,
-          links: validLinks.length > 0 ? validLinks : null,
-          is_public: formData.is_public,
-        },
-      ])
+      // Create itinerary first
+      const { data: itinerary, error: itineraryError } = await supabase
+        .from('itineraries')
+        .insert([
+          {
+            user_id: user.id,
+            title: formData.title,
+            description: formData.description,
+            destination: formData.destination,
+            start_date: formData.start_date || null,
+            end_date: formData.end_date || null,
+            recommendations: formData.recommendations || null,
+            photos: validPhotos.length > 0 ? validPhotos : null,
+            links: validLinks.length > 0 ? validLinks : null,
+            is_public: formData.is_public,
+          },
+        ])
+        .select()
+        .single()
 
-      if (error) throw error
+      if (itineraryError) throw itineraryError
+
+      // Create days for the itinerary
+      const daysToInsert = days
+        .filter(day => day.title.trim() !== '' && day.activities.some(a => a.trim() !== ''))
+        .map((day, index) => ({
+          itinerary_id: itinerary.id,
+          day_number: index + 1,
+          title: day.title,
+          activities: day.activities.filter(a => a.trim() !== ''),
+        }))
+
+      if (daysToInsert.length > 0) {
+        const { error: daysError } = await supabase
+          .from('itinerary_days')
+          .insert(daysToInsert)
+
+        if (daysError) throw daysError
+      }
 
       setMessage('Itinerary created successfully!')
       setFormData({
@@ -83,6 +109,7 @@ export default function AddItineraryPage() {
       })
       setPhotoUrls([''])
       setLinks([''])
+      setDays([{ title: 'Day 1', activities: [''] }])
 
       // Redirect to home page after 1.5 seconds
       setTimeout(() => {
@@ -131,6 +158,39 @@ export default function AddItineraryPage() {
     const newLinks = [...links]
     newLinks[index] = value
     setLinks(newLinks)
+  }
+
+  // Day management functions
+  const addDay = () => {
+    setDays([...days, { title: `Day ${days.length + 1}`, activities: [''] }])
+  }
+
+  const removeDay = (dayIndex: number) => {
+    setDays(days.filter((_, i) => i !== dayIndex))
+  }
+
+  const updateDayTitle = (dayIndex: number, value: string) => {
+    const newDays = [...days]
+    newDays[dayIndex].title = value
+    setDays(newDays)
+  }
+
+  const addActivity = (dayIndex: number) => {
+    const newDays = [...days]
+    newDays[dayIndex].activities.push('')
+    setDays(newDays)
+  }
+
+  const removeActivity = (dayIndex: number, activityIndex: number) => {
+    const newDays = [...days]
+    newDays[dayIndex].activities = newDays[dayIndex].activities.filter((_, i) => i !== activityIndex)
+    setDays(newDays)
+  }
+
+  const updateActivity = (dayIndex: number, activityIndex: number, value: string) => {
+    const newDays = [...days]
+    newDays[dayIndex].activities[activityIndex] = value
+    setDays(newDays)
   }
 
   return (
@@ -344,6 +404,78 @@ export default function AddItineraryPage() {
               >
                 + Add another link
               </button>
+            </div>
+          </div>
+
+          {/* Day-by-Day Itinerary */}
+          <div className="border-t border-gray-200 pt-8">
+            <div className="flex items-center justify-between mb-4">
+              <label className="block text-sm font-medium text-[#2C2C2C]">
+                Day-by-Day Plan
+              </label>
+              <button
+                type="button"
+                onClick={addDay}
+                className="text-[#0069f0] text-sm font-medium hover:underline"
+              >
+                + Add Day
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {days.map((day, dayIndex) => (
+                <div key={dayIndex} className="bg-gray-50 border border-gray-200 rounded-xl p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <input
+                      type="text"
+                      value={day.title}
+                      onChange={(e) => updateDayTitle(dayIndex, e.target.value)}
+                      placeholder={`Day ${dayIndex + 1}`}
+                      className="text-lg font-semibold bg-transparent border-none focus:outline-none text-[#2C2C2C] w-full"
+                    />
+                    {days.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeDay(dayIndex)}
+                        className="text-red-600 hover:bg-red-50 px-3 py-1 rounded-lg text-sm transition-colors"
+                      >
+                        Remove Day
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm text-gray-600 mb-2">Activities</label>
+                    {day.activities.map((activity, activityIndex) => (
+                      <div key={activityIndex} className="flex gap-2">
+                        <input
+                          type="text"
+                          value={activity}
+                          onChange={(e) => updateActivity(dayIndex, activityIndex, e.target.value)}
+                          placeholder="e.g., Visit Eiffel Tower at 9 AM"
+                          className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all"
+                        />
+                        {day.activities.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeActivity(dayIndex, activityIndex)}
+                            className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => addActivity(dayIndex)}
+                      className="text-[#0069f0] text-sm font-medium hover:underline mt-2"
+                    >
+                      + Add Activity
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

@@ -6,6 +6,13 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
+interface ItineraryDay {
+  id: number
+  day_number: number
+  title: string
+  activities: string[]
+}
+
 interface Itinerary {
   id: number
   title: string
@@ -16,6 +23,7 @@ interface Itinerary {
   photos: string[]
   is_public: boolean
   created_at: string
+  itinerary_days: ItineraryDay[]
 }
 
 export default function ProfilePage() {
@@ -52,12 +60,29 @@ export default function ProfilePage() {
       try {
         const { data, error } = await supabase
           .from('itineraries')
-          .select('*')
+          .select(`
+            *,
+            itinerary_days (
+              id,
+              day_number,
+              title,
+              activities
+            )
+          `)
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
 
         if (error) throw error
-        setItineraries(data || [])
+
+        // Sort itinerary_days by day_number
+        const sortedData = (data || []).map(itinerary => ({
+          ...itinerary,
+          itinerary_days: (itinerary.itinerary_days || []).sort(
+            (a, b) => a.day_number - b.day_number
+          )
+        }))
+
+        setItineraries(sortedData)
       } catch (error) {
         console.error('Error fetching itineraries:', error)
       } finally {
@@ -301,9 +326,17 @@ export default function ProfilePage() {
                         {itinerary.title}
                       </h3>
 
-                      <p className="text-gray-600 text-[15px] leading-relaxed line-clamp-2">
+                      <p className="text-gray-600 text-[15px] leading-relaxed line-clamp-2 mb-3">
                         {itinerary.description}
                       </p>
+
+                      {itinerary.itinerary_days && itinerary.itinerary_days.length > 0 && (
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-2">
+                          <p className="text-xs text-gray-700">
+                            📅 {itinerary.itinerary_days.length} day{itinerary.itinerary_days.length > 1 ? 's' : ''} planned
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

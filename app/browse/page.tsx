@@ -6,6 +6,13 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
+interface ItineraryDay {
+  id: number
+  day_number: number
+  title: string
+  activities: string[]
+}
+
 interface Itinerary {
   id: number
   title: string
@@ -20,6 +27,7 @@ interface Itinerary {
   user_profiles: {
     username: string | null
   }
+  itinerary_days: ItineraryDay[]
 }
 
 export default function BrowsePage() {
@@ -43,6 +51,12 @@ export default function BrowsePage() {
             *,
             user_profiles (
               username
+            ),
+            itinerary_days (
+              id,
+              day_number,
+              title,
+              activities
             )
           `)
           .eq('is_public', true)
@@ -50,7 +64,15 @@ export default function BrowsePage() {
 
         if (error) throw error
 
-        setItineraries(data || [])
+        // Sort itinerary_days by day_number for each itinerary
+        const sortedData = (data || []).map(itinerary => ({
+          ...itinerary,
+          itinerary_days: (itinerary.itinerary_days || []).sort(
+            (a, b) => a.day_number - b.day_number
+          )
+        }))
+
+        setItineraries(sortedData)
       } catch (error) {
         console.error('Error fetching itineraries:', error)
       } finally {
@@ -169,8 +191,20 @@ export default function BrowsePage() {
                     </div>
                   )}
 
-                  {itinerary.recommendations && (
+                  {itinerary.itinerary_days && itinerary.itinerary_days.length > 0 && (
                     <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-4">
+                      <p className="text-sm font-medium text-gray-700 mb-2">
+                        📅 {itinerary.itinerary_days.length} Day{itinerary.itinerary_days.length > 1 ? 's' : ''} Planned
+                      </p>
+                      <div className="text-xs text-gray-600">
+                        {itinerary.itinerary_days[0]?.title}: {itinerary.itinerary_days[0]?.activities[0]}
+                        {itinerary.itinerary_days[0]?.activities.length > 1 && ` +${itinerary.itinerary_days[0].activities.length - 1} more`}
+                      </div>
+                    </div>
+                  )}
+
+                  {itinerary.recommendations && (
+                    <div className="bg-green-50 border border-green-100 rounded-xl p-3 mb-4">
                       <p className="text-sm text-gray-700 line-clamp-2">
                         💡 {itinerary.recommendations}
                       </p>
