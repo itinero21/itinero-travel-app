@@ -17,6 +17,9 @@ interface Itinerary {
   recommendations: string
   links: string[]
   created_at: string
+  user_profiles: {
+    username: string | null
+  }
 }
 
 export default function BrowsePage() {
@@ -36,7 +39,12 @@ export default function BrowsePage() {
       try {
         const { data, error } = await supabase
           .from('itineraries')
-          .select('*')
+          .select(`
+            *,
+            user_profiles (
+              username
+            )
+          `)
           .eq('is_public', true)
           .order('created_at', { ascending: false })
 
@@ -135,6 +143,13 @@ export default function BrowsePage() {
                     <span>📍</span>
                     <span>{itinerary.destination}</span>
                   </div>
+
+                  {itinerary.user_profiles?.username && (
+                    <div className="flex items-center gap-2 text-sm text-gray-600 mb-3">
+                      <span>👤</span>
+                      <span>by {itinerary.user_profiles.username}</span>
+                    </div>
+                  )}
 
                   <h3 className="text-xl font-semibold text-[#2C2C2C] mb-2 group-hover:text-[#0069f0] transition-colors">
                     {itinerary.title}

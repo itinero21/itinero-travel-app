@@ -85,6 +85,12 @@ export default function Home() {
                       Browse Trips
                     </Link>
                   )}
+                  <Link
+                    href="/profile"
+                    className="text-gray-600 hover:text-gray-900 px-4 py-2.5 text-[15px] font-medium transition-colors"
+                  >
+                    Profile
+                  </Link>
                   <button
                     onClick={handleLogout}
                     className="text-gray-600 hover:text-gray-900 px-4 py-2.5 text-[15px] font-medium transition-colors"

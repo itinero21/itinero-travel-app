@@ -8,6 +8,8 @@ interface UserProfile {
   id: string
   email: string
   role: 'traveller' | 'experienced_traveller'
+  username: string | null
+  bio: string | null
 }
 
 interface AuthContextType {
