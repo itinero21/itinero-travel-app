@@ -5,6 +5,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import Toast from '@/components/Toast'
+import ItineraryCardSkeleton from '@/components/ItineraryCardSkeleton'
 
 interface ItineraryDay {
   id: number
@@ -34,6 +36,10 @@ export default function ProfilePage() {
   const [bio, setBio] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [toastMessage, setToastMessage] = useState<{
+    text: string
+    type: 'success' | 'error' | 'info'
+  } | null>(null)
   const [itineraries, setItineraries] = useState<Itinerary[]>([])
   const [loadingItineraries, setLoadingItineraries] = useState(true)
 
@@ -123,9 +129,9 @@ export default function ProfilePage() {
 
       await refreshProfile()
       setEditing(false)
-      setMessage('Profile updated successfully!')
+      setToastMessage({ text: 'Profile updated successfully!', type: 'success' })
     } catch (error: any) {
-      setMessage(error.message || 'Error updating profile')
+      setToastMessage({ text: error.message || 'Error updating profile', type: 'error' })
     } finally {
       setSaving(false)
     }
@@ -133,6 +139,13 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-white">
+      {toastMessage && (
+        <Toast
+          message={toastMessage.text}
+          type={toastMessage.type}
+          onClose={() => setToastMessage(null)}
+        />
+      )}
       {/* Navigation Bar */}
       <nav className="border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-6 py-5">
@@ -217,16 +230,6 @@ export default function ProfilePage() {
                   Cancel
                 </button>
               </div>
-
-              {message && (
-                <div className={`p-4 rounded-xl ${
-                  message.includes('successfully')
-                    ? 'bg-green-50 border border-green-200 text-green-800'
-                    : 'bg-red-50 border border-red-200 text-red-800'
-                }`}>
-                  <p className="text-sm">{message}</p>
-                </div>
-              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -269,7 +272,7 @@ export default function ProfilePage() {
             {loadingItineraries ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {[1, 2].map((i) => (
-                  <div key={i} className="bg-gray-100 h-64 rounded-2xl animate-pulse"></div>
+                  <ItineraryCardSkeleton key={i} />
                 ))}
               </div>
             ) : itineraries.length === 0 ? (
@@ -295,17 +298,19 @@ export default function ProfilePage() {
                     key={itinerary.id}
                     className="group bg-white border border-gray-100 rounded-2xl overflow-hidden hover:shadow-xl hover:border-gray-200 transition-all duration-300"
                   >
-                    <div className="aspect-[4/3] bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center overflow-hidden">
-                      {itinerary.photos && itinerary.photos.length > 0 ? (
-                        <img
-                          src={itinerary.photos[0]}
-                          alt={itinerary.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                      ) : (
-                        <span className="text-6xl opacity-60">📸</span>
-                      )}
-                    </div>
+                    <Link href={`/itinerary/${itinerary.id}`}>
+                      <div className="aspect-[4/3] bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center overflow-hidden cursor-pointer">
+                        {itinerary.photos && itinerary.photos.length > 0 ? (
+                          <img
+                            src={itinerary.photos[0]}
+                            alt={itinerary.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                        ) : (
+                          <span className="text-6xl opacity-60">📸</span>
+                        )}
+                      </div>
+                    </Link>
 
                     <div className="p-6">
                       <div className="flex items-center justify-between mb-2">
@@ -322,21 +327,31 @@ export default function ProfilePage() {
                         </span>
                       </div>
 
-                      <h3 className="text-xl font-semibold text-[#2C2C2C] mb-2">
-                        {itinerary.title}
-                      </h3>
+                      <Link href={`/itinerary/${itinerary.id}`}>
+                        <h3 className="text-xl font-semibold text-[#2C2C2C] mb-2 hover:text-[#0069f0] transition-colors cursor-pointer">
+                          {itinerary.title}
+                        </h3>
+                      </Link>
 
-                      <p className="text-gray-600 text-[15px] leading-relaxed line-clamp-2 mb-3">
+                      <p className="text-gray-600 text-[15px] leading-relaxed line-clamp-2 mb-4">
                         {itinerary.description}
                       </p>
 
                       {itinerary.itinerary_days && itinerary.itinerary_days.length > 0 && (
-                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-2">
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-2 mb-4">
                           <p className="text-xs text-gray-700">
                             📅 {itinerary.itinerary_days.length} day{itinerary.itinerary_days.length > 1 ? 's' : ''} planned
                           </p>
                         </div>
                       )}
+
+                      <Link
+                        href={`/itinerary/${itinerary.id}`}
+                        className="inline-flex items-center gap-2 text-sm font-medium text-[#0069f0] hover:text-[#0052c7] transition-colors"
+                      >
+                        <span>View Details</span>
+                        <span>→</span>
+                      </Link>
                     </div>
                   </div>
                 ))}

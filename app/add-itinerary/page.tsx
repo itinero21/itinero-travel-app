@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import Toast from '@/components/Toast'
 
 export default function AddItineraryPage() {
   const { user, userProfile, loading } = useAuth()
@@ -25,6 +26,10 @@ export default function AddItineraryPage() {
   ])
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
+  const [toastMessage, setToastMessage] = useState<{
+    text: string
+    type: 'success' | 'error' | 'info'
+  } | null>(null)
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -51,6 +56,29 @@ export default function AddItineraryPage() {
     e.preventDefault()
     setSubmitting(true)
     setMessage('')
+
+    // Validation
+    if (!formData.title.trim()) {
+      setToastMessage({ text: 'Please enter a trip name', type: 'error' })
+      setSubmitting(false)
+      return
+    }
+
+    if (!formData.destination.trim()) {
+      setToastMessage({ text: 'Please enter a destination', type: 'error' })
+      setSubmitting(false)
+      return
+    }
+
+    if (formData.start_date && formData.end_date) {
+      const start = new Date(formData.start_date)
+      const end = new Date(formData.end_date)
+      if (end < start) {
+        setToastMessage({ text: 'End date must be after start date', type: 'error' })
+        setSubmitting(false)
+        return
+      }
+    }
 
     try {
       // Filter out empty photo URLs and links
@@ -97,7 +125,7 @@ export default function AddItineraryPage() {
         if (daysError) throw daysError
       }
 
-      setMessage('Itinerary created successfully!')
+      setToastMessage({ text: 'Itinerary created successfully!', type: 'success' })
       setFormData({
         title: '',
         description: '',
@@ -116,7 +144,7 @@ export default function AddItineraryPage() {
         router.push('/')
       }, 1500)
     } catch (error: any) {
-      setMessage(error.message || 'Error creating itinerary')
+      setToastMessage({ text: error.message || 'Error creating itinerary', type: 'error' })
     } finally {
       setSubmitting(false)
     }
@@ -195,6 +223,13 @@ export default function AddItineraryPage() {
 
   return (
     <div className="min-h-screen bg-white">
+      {toastMessage && (
+        <Toast
+          message={toastMessage.text}
+          type={toastMessage.type}
+          onClose={() => setToastMessage(null)}
+        />
+      )}
       {/* Navigation Bar */}
       <nav className="border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-6 py-5">
@@ -510,26 +545,6 @@ export default function AddItineraryPage() {
             </Link>
           </div>
         </form>
-
-        {message && (
-          <div
-            className={`mt-6 p-5 rounded-xl ${
-              message.includes('successfully')
-                ? 'bg-green-50 border border-green-200'
-                : 'bg-red-50 border border-red-200'
-            }`}
-          >
-            <p
-              className={`text-sm ${
-                message.includes('successfully')
-                  ? 'text-green-800'
-                  : 'text-red-800'
-              }`}
-            >
-              {message}
-            </p>
-          </div>
-        )}
       </div>
     </div>
   )

@@ -5,6 +5,8 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import ItineraryCardSkeleton from '@/components/ItineraryCardSkeleton'
+import ImageWithFallback from '@/components/ImageWithFallback'
 
 interface ItineraryDay {
   id: number
@@ -34,7 +36,11 @@ export default function BrowsePage() {
   const { user, userProfile, loading } = useAuth()
   const router = useRouter()
   const [itineraries, setItineraries] = useState<Itinerary[]>([])
+  const [filteredItineraries, setFilteredItineraries] = useState<Itinerary[]>([])
   const [loadingData, setLoadingData] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedDestination, setSelectedDestination] = useState('')
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest')
 
   useEffect(() => {
     if (!loading && !user) {
@@ -73,6 +79,7 @@ export default function BrowsePage() {
         }))
 
         setItineraries(sortedData)
+        setFilteredItineraries(sortedData)
       } catch (error) {
         console.error('Error fetching itineraries:', error)
       } finally {
@@ -84,6 +91,42 @@ export default function BrowsePage() {
       fetchItineraries()
     }
   }, [user])
+
+  // Filter and sort itineraries
+  useEffect(() => {
+    let filtered = [...itineraries]
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(
+        (itinerary) =>
+          itinerary.title.toLowerCase().includes(query) ||
+          itinerary.description.toLowerCase().includes(query) ||
+          itinerary.destination.toLowerCase().includes(query) ||
+          itinerary.user_profiles?.username?.toLowerCase().includes(query)
+      )
+    }
+
+    if (selectedDestination) {
+      filtered = filtered.filter(
+        (itinerary) => itinerary.destination === selectedDestination
+      )
+    }
+
+    // Sort
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.created_at).getTime()
+      const dateB = new Date(b.created_at).getTime()
+      return sortBy === 'newest' ? dateB - dateA : dateA - dateB
+    })
+
+    setFilteredItineraries(filtered)
+  }, [searchQuery, selectedDestination, sortBy, itineraries])
+
+  // Get unique destinations for filter
+  const uniqueDestinations = Array.from(
+    new Set(itineraries.map((i) => i.destination))
+  ).sort()
 
   if (loading || !user) {
     return (
@@ -118,38 +161,109 @@ export default function BrowsePage() {
           <h1 className="text-5xl font-semibold text-[#2C2C2C] mb-4">
             Discover Travel Itineraries
           </h1>
-          <p className="text-xl text-gray-600">
+          <p className="text-xl text-gray-600 mb-8">
             Explore amazing trips shared by experienced travelers
           </p>
+
+          {/* Search and Filter */}
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                placeholder="Search by title, destination, or creator..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full px-5 py-3.5 pl-12 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all"
+              />
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-xl">
+                🔍
+              </span>
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={selectedDestination}
+                onChange={(e) => setSelectedDestination(e.target.value)}
+                className="px-5 py-3.5 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all bg-white min-w-[180px]"
+              >
+                <option value="">All Destinations</option>
+                {uniqueDestinations.map((destination) => (
+                  <option key={destination} value={destination}>
+                    {destination}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest')}
+                className="px-5 py-3.5 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all bg-white"
+              >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Results count */}
+          {!loadingData && (
+            <p className="text-sm text-gray-500 mt-4">
+              Showing {filteredItineraries.length} of {itineraries.length} itineraries
+            </p>
+          )}
         </div>
 
         {loadingData ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div key={i} className="bg-gray-100 h-96 rounded-2xl animate-pulse"></div>
+              <ItineraryCardSkeleton key={i} />
             ))}
           </div>
-        ) : itineraries.length === 0 ? (
+        ) : filteredItineraries.length === 0 ? (
           <div className="text-center py-20">
-            <div className="text-6xl mb-4">🌍</div>
+            <div className="text-6xl mb-4">
+              {searchQuery || selectedDestination ? '🔍' : '🌍'}
+            </div>
             <h3 className="text-2xl font-semibold text-[#2C2C2C] mb-2">
-              No itineraries yet
+              {searchQuery || selectedDestination
+                ? 'No matching itineraries'
+                : 'No itineraries yet'}
             </h3>
-            <p className="text-gray-600">
-              Check back soon for amazing travel experiences!
+            <p className="text-gray-600 mb-4">
+              {searchQuery || selectedDestination
+                ? 'Try adjusting your search or filters'
+                : 'Check back soon for amazing travel experiences!'}
             </p>
+            {(searchQuery || selectedDestination) && (
+              <button
+                onClick={() => {
+                  setSearchQuery('')
+                  setSelectedDestination('')
+                }}
+                className="text-[#0069f0] hover:underline text-sm font-medium"
+              >
+                Clear all filters
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {itineraries.map((itinerary) => (
-              <div
+            {filteredItineraries.map((itinerary) => (
+              <Link
                 key={itinerary.id}
-                className="group bg-white border border-gray-100 rounded-2xl overflow-hidden hover:shadow-xl hover:border-gray-200 transition-all duration-300"
+                href={`/itinerary/${itinerary.id}`}
+                className="group bg-white border border-gray-100 rounded-2xl overflow-hidden hover:shadow-xl hover:border-gray-200 transition-all duration-300 cursor-pointer"
               >
                 {/* Image */}
-                <div className="aspect-[4/3] bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center overflow-hidden">
+                <div className="aspect-[4/3] bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center overflow-hidden relative">
                   {itinerary.photos && itinerary.photos.length > 0 ? (
-                    <img
+                    <ImageWithFallback
                       src={itinerary.photos[0]}
                       alt={itinerary.title}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -227,7 +341,7 @@ export default function BrowsePage() {
                     </div>
                   )}
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         )}
