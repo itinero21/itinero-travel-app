@@ -77,12 +77,24 @@ export default function Home() {
                       Create Itinerary
                     </Link>
                   )}
-                  {userProfile.role === 'traveller' && (
+                  <Link
+                    href="/browse"
+                    className="text-gray-600 hover:text-gray-900 px-4 py-2.5 text-[15px] font-medium transition-colors"
+                  >
+                    Browse
+                  </Link>
+                  <Link
+                    href="/saved"
+                    className="text-gray-600 hover:text-gray-900 px-4 py-2.5 text-[15px] font-medium transition-colors"
+                  >
+                    Saved
+                  </Link>
+                  {userProfile.role === 'experienced_traveller' && (
                     <Link
-                      href="/browse"
-                      className="bg-[#2C2C2C] text-white px-6 py-2.5 rounded-full text-[15px] font-medium hover:bg-[#1a1a1a] transition-colors"
+                      href="/dashboard"
+                      className="text-gray-600 hover:text-gray-900 px-4 py-2.5 text-[15px] font-medium transition-colors"
                     >
-                      Browse Trips
+                      Dashboard
                     </Link>
                   )}
                   <Link

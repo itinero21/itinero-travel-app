@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import ItineraryCardSkeleton from '@/components/ItineraryCardSkeleton'
 import ImageWithFallback from '@/components/ImageWithFallback'
+import SaveButton from '@/components/SaveButton'
+import TopCreators from '@/components/TopCreators'
 
 interface ItineraryDay {
   id: number
@@ -25,6 +27,7 @@ interface Itinerary {
   photos: string[]
   recommendations: string
   links: string[]
+  budget: string | null
   created_at: string
   user_profiles: {
     username: string | null
@@ -33,14 +36,18 @@ interface Itinerary {
 }
 
 export default function BrowsePage() {
-  const { user, userProfile, loading } = useAuth()
+  const { user, loading } = useAuth()
   const router = useRouter()
   const [itineraries, setItineraries] = useState<Itinerary[]>([])
   const [filteredItineraries, setFilteredItineraries] = useState<Itinerary[]>([])
+  const [savedIds, setSavedIds] = useState<Set<number>>(new Set())
+  const [ratings, setRatings] = useState<Record<number, { avg: number; count: number }>>({})
   const [loadingData, setLoadingData] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedDestination, setSelectedDestination] = useState('')
-  const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest')
+  const [selectedBudget, setSelectedBudget] = useState('')
+  const [selectedDuration, setSelectedDuration] = useState('')
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'top_rated' | 'most_reviewed' | 'highest_rated'>('newest')
 
   useEffect(() => {
     if (!loading && !user) {
@@ -74,12 +81,41 @@ export default function BrowsePage() {
         const sortedData = (data || []).map(itinerary => ({
           ...itinerary,
           itinerary_days: (itinerary.itinerary_days || []).sort(
-            (a, b) => a.day_number - b.day_number
+            (a: ItineraryDay, b: ItineraryDay) => a.day_number - b.day_number
           )
         }))
 
         setItineraries(sortedData)
         setFilteredItineraries(sortedData)
+
+        // Fetch saved IDs + ratings in parallel
+        const [{ data: savedData }, { data: reviewData }] = await Promise.all([
+          supabase
+            .from('saved_itineraries')
+            .select('itinerary_id')
+            .eq('user_id', user!.id),
+          supabase
+            .from('reviews')
+            .select('itinerary_id, rating'),
+        ])
+
+        if (savedData) {
+          setSavedIds(new Set(savedData.map((s) => s.itinerary_id as number)))
+        }
+
+        if (reviewData) {
+          const map: Record<number, { sum: number; count: number }> = {}
+          for (const r of reviewData) {
+            if (!map[r.itinerary_id]) map[r.itinerary_id] = { sum: 0, count: 0 }
+            map[r.itinerary_id].sum += r.rating
+            map[r.itinerary_id].count += 1
+          }
+          const computed: Record<number, { avg: number; count: number }> = {}
+          for (const [id, { sum, count }] of Object.entries(map)) {
+            computed[Number(id)] = { avg: Math.round((sum / count) * 10) / 10, count }
+          }
+          setRatings(computed)
+        }
       } catch (error) {
         console.error('Error fetching itineraries:', error)
       } finally {
@@ -91,6 +127,21 @@ export default function BrowsePage() {
       fetchItineraries()
     }
   }, [user])
+
+  // Calculate trip duration in days
+  const getDuration = (itinerary: Itinerary): number | null => {
+    if (itinerary.start_date && itinerary.end_date) {
+      const diff = Math.round(
+        (new Date(itinerary.end_date).getTime() - new Date(itinerary.start_date).getTime()) /
+          (1000 * 60 * 60 * 24)
+      ) + 1
+      return diff > 0 ? diff : null
+    }
+    if (itinerary.itinerary_days?.length > 0) {
+      return itinerary.itinerary_days.length
+    }
+    return null
+  }
 
   // Filter and sort itineraries
   useEffect(() => {
@@ -113,15 +164,44 @@ export default function BrowsePage() {
       )
     }
 
+    if (selectedBudget) {
+      filtered = filtered.filter((itinerary) => {
+        if (!itinerary.budget) return true
+        return itinerary.budget.toLowerCase().includes(selectedBudget.toLowerCase())
+      })
+    }
+
+    if (selectedDuration) {
+      filtered = filtered.filter((itinerary) => {
+        const days = getDuration(itinerary)
+        if (days === null) return true
+        if (selectedDuration === 'weekend') return days >= 1 && days <= 3
+        if (selectedDuration === 'week') return days >= 4 && days <= 7
+        if (selectedDuration === 'twoweeks') return days >= 8 && days <= 14
+        if (selectedDuration === 'long') return days >= 15
+        return true
+      })
+    }
+
     // Sort
     filtered.sort((a, b) => {
+      if (sortBy === 'top_rated' || sortBy === 'highest_rated') {
+        const rA = ratings[a.id]?.avg ?? -1
+        const rB = ratings[b.id]?.avg ?? -1
+        return rB - rA
+      }
+      if (sortBy === 'most_reviewed') {
+        const cA = ratings[a.id]?.count ?? 0
+        const cB = ratings[b.id]?.count ?? 0
+        return cB - cA
+      }
       const dateA = new Date(a.created_at).getTime()
       const dateB = new Date(b.created_at).getTime()
       return sortBy === 'newest' ? dateB - dateA : dateA - dateB
     })
 
     setFilteredItineraries(filtered)
-  }, [searchQuery, selectedDestination, sortBy, itineraries])
+  }, [searchQuery, selectedDestination, selectedBudget, selectedDuration, sortBy, itineraries, ratings])
 
   // Get unique destinations for filter
   const uniqueDestinations = Array.from(
@@ -201,19 +281,48 @@ export default function BrowsePage() {
                 ))}
               </select>
               <select
+                value={selectedBudget}
+                onChange={(e) => setSelectedBudget(e.target.value)}
+                className="px-5 py-3.5 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all bg-white min-w-[150px]"
+              >
+                <option value="">Any budget</option>
+                <option value="budget">Budget</option>
+                <option value="mid">Mid-range</option>
+                <option value="luxury">Luxury</option>
+              </select>
+              <select
+                value={selectedDuration}
+                onChange={(e) => setSelectedDuration(e.target.value)}
+                className="px-5 py-3.5 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all bg-white min-w-[170px]"
+              >
+                <option value="">Any length</option>
+                <option value="weekend">Weekend (1–3 days)</option>
+                <option value="week">One week (4–7 days)</option>
+                <option value="twoweeks">Two weeks (8–14 days)</option>
+                <option value="long">Long trip (15+ days)</option>
+              </select>
+              <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest')}
+                onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest' | 'top_rated' | 'most_reviewed' | 'highest_rated')}
                 className="px-5 py-3.5 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all bg-white"
               >
                 <option value="newest">Newest First</option>
                 <option value="oldest">Oldest First</option>
+                <option value="highest_rated">Highest Rated</option>
+                <option value="most_reviewed">Most Reviewed</option>
               </select>
             </div>
           </div>
 
+          {/* Featured Creators */}
+          <div className="mt-10">
+            <h2 className="text-xl font-semibold text-[#2C2C2C] mb-4">Featured creators</h2>
+            <TopCreators />
+          </div>
+
           {/* Results count */}
           {!loadingData && (
-            <p className="text-sm text-gray-500 mt-4">
+            <p className="text-sm text-gray-500 mt-6">
               Showing {filteredItineraries.length} of {itineraries.length} itineraries
             </p>
           )}
@@ -228,23 +337,25 @@ export default function BrowsePage() {
         ) : filteredItineraries.length === 0 ? (
           <div className="text-center py-20">
             <div className="text-6xl mb-4">
-              {searchQuery || selectedDestination ? '🔍' : '🌍'}
+              {searchQuery || selectedDestination || selectedBudget || selectedDuration ? '🔍' : '🌍'}
             </div>
             <h3 className="text-2xl font-semibold text-[#2C2C2C] mb-2">
-              {searchQuery || selectedDestination
+              {searchQuery || selectedDestination || selectedBudget || selectedDuration
                 ? 'No matching itineraries'
                 : 'No itineraries yet'}
             </h3>
             <p className="text-gray-600 mb-4">
-              {searchQuery || selectedDestination
+              {searchQuery || selectedDestination || selectedBudget || selectedDuration
                 ? 'Try adjusting your search or filters'
                 : 'Check back soon for amazing travel experiences!'}
             </p>
-            {(searchQuery || selectedDestination) && (
+            {(searchQuery || selectedDestination || selectedBudget || selectedDuration) && (
               <button
                 onClick={() => {
                   setSearchQuery('')
                   setSelectedDestination('')
+                  setSelectedBudget('')
+                  setSelectedDuration('')
                 }}
                 className="text-[#0069f0] hover:underline text-sm font-medium"
               >
@@ -271,6 +382,12 @@ export default function BrowsePage() {
                   ) : (
                     <span className="text-6xl opacity-60">📸</span>
                   )}
+                  <div className="absolute top-3 right-3">
+                    <SaveButton
+                      itineraryId={itinerary.id}
+                      initialSaved={savedIds.has(itinerary.id)}
+                    />
+                  </div>
                 </div>
 
                 {/* Content */}
@@ -287,9 +404,18 @@ export default function BrowsePage() {
                     </div>
                   )}
 
-                  <h3 className="text-xl font-semibold text-[#2C2C2C] mb-2 group-hover:text-[#0069f0] transition-colors">
+                  <h3 className="text-xl font-semibold text-[#2C2C2C] mb-1 group-hover:text-[#0069f0] transition-colors">
                     {itinerary.title}
                   </h3>
+
+                  {ratings[itinerary.id] && (
+                    <p className="text-sm text-amber-600 font-medium mb-2">
+                      ★ {ratings[itinerary.id].avg}&nbsp;
+                      <span className="text-gray-400 font-normal">
+                        ({ratings[itinerary.id].count} {ratings[itinerary.id].count === 1 ? 'review' : 'reviews'})
+                      </span>
+                    </p>
+                  )}
 
                   <p className="text-gray-600 text-[15px] leading-relaxed mb-4 line-clamp-3">
                     {itinerary.description}

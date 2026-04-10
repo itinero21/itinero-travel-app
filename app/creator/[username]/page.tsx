@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import ItineraryCardSkeleton from '@/components/ItineraryCardSkeleton'
+import FollowButton from '@/components/FollowButton'
+import { fetchTopCreators } from '@/lib/creatorScore'
 
 interface ItineraryDay {
   id: number
@@ -35,12 +37,26 @@ interface CreatorProfile {
 
 export default function CreatorProfilePage() {
   const params = useParams()
-  const router = useRouter()
-  const { loading: authLoading } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const [creator, setCreator] = useState<CreatorProfile | null>(null)
   const [itineraries, setItineraries] = useState<Itinerary[]>([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [followerCount, setFollowerCount] = useState(0)
+  const [isFollowing, setIsFollowing] = useState(false)
+  const [ratings, setRatings] = useState<Record<number, { avg: number; count: number }>>({})
+  const [overallAvg, setOverallAvg] = useState<number | null>(null)
+  const [isTopCreator, setIsTopCreator] = useState(false)
+
+  // Dynamic page title
+  useEffect(() => {
+    if (creator?.username) {
+      document.title = `${creator.username}'s travel itineraries — Itinero`
+    }
+    return () => {
+      document.title = 'Itinero'
+    }
+  }, [creator?.username])
 
   useEffect(() => {
     async function fetchCreatorAndItineraries() {
@@ -61,6 +77,24 @@ export default function CreatorProfilePage() {
         }
 
         setCreator(creatorData)
+
+        // Fetch follower count and current user's follow status in parallel
+        const [{ count }, followResult] = await Promise.all([
+          supabase
+            .from('follows')
+            .select('*', { count: 'exact', head: true })
+            .eq('following_id', creatorData.id),
+          user
+            ? supabase
+                .from('follows')
+                .select('id')
+                .eq('follower_id', user.id)
+                .eq('following_id', creatorData.id)
+                .maybeSingle()
+            : Promise.resolve({ data: null }),
+        ])
+        setFollowerCount(count || 0)
+        setIsFollowing(!!(followResult as { data: unknown }).data)
 
         // Fetch creator's public itineraries
         const { data: itinerariesData, error: itinerariesError } = await supabase
@@ -84,11 +118,46 @@ export default function CreatorProfilePage() {
         const sortedData = (itinerariesData || []).map(itinerary => ({
           ...itinerary,
           itinerary_days: (itinerary.itinerary_days || []).sort(
-            (a, b) => a.day_number - b.day_number
+            (a: ItineraryDay, b: ItineraryDay) => a.day_number - b.day_number
           )
         }))
 
         setItineraries(sortedData)
+
+        // Check if this creator is in the top 3 overall
+        fetchTopCreators(3).then((top3) => {
+          setIsTopCreator(top3.some((c) => c.id === creatorData.id))
+        })
+
+        // Fetch ratings for all public itineraries
+        if (sortedData.length > 0) {
+          const ids = sortedData.map((it) => it.id)
+          const { data: reviewData } = await supabase
+            .from('reviews')
+            .select('itinerary_id, rating')
+            .in('itinerary_id', ids)
+
+          if (reviewData) {
+            const map: Record<number, { sum: number; count: number }> = {}
+            for (const r of reviewData) {
+              if (!map[r.itinerary_id]) map[r.itinerary_id] = { sum: 0, count: 0 }
+              map[r.itinerary_id].sum += r.rating
+              map[r.itinerary_id].count += 1
+            }
+            const computed: Record<number, { avg: number; count: number }> = {}
+            for (const [id, { sum, count }] of Object.entries(map)) {
+              computed[Number(id)] = { avg: Math.round((sum / count) * 10) / 10, count }
+            }
+            setRatings(computed)
+
+            // Overall avg across all rated itineraries
+            const rated = Object.values(computed)
+            if (rated.length > 0) {
+              const total = rated.reduce((s, r) => s + r.avg, 0)
+              setOverallAvg(Math.round((total / rated.length) * 10) / 10)
+            }
+          }
+        }
       } catch (error) {
         console.error('Error fetching creator data:', error)
         setNotFound(true)
@@ -193,19 +262,41 @@ export default function CreatorProfilePage() {
               <span className="text-4xl">👤</span>
             </div>
             <div className="flex-1">
-              <h1 className="text-4xl font-semibold text-[#2C2C2C] mb-2">
-                {creator.username}
-              </h1>
+              <div className="flex flex-wrap items-center gap-3 mb-2">
+                <h1 className="text-4xl font-semibold text-[#2C2C2C]">
+                  {creator.username}
+                </h1>
+                {isTopCreator && (
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                    Top creator ★
+                  </span>
+                )}
+              </div>
               {creator.bio && (
                 <p className="text-lg text-gray-700 leading-relaxed mb-4">
                   {creator.bio}
                 </p>
               )}
-              <div className="flex items-center gap-2 text-gray-500">
-                <span>✈️</span>
-                <span className="text-sm">
-                  {itineraries.length} {itineraries.length === 1 ? 'trip' : 'trips'} shared
-                </span>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2 text-gray-500">
+                  <span>✈️</span>
+                  <span className="text-sm">
+                    {itineraries.length} {itineraries.length === 1 ? 'trip' : 'trips'} shared
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-sm">
+                  {overallAvg !== null ? (
+                    <span className="text-amber-600 font-medium">★ {overallAvg}</span>
+                  ) : (
+                    <span className="text-gray-400">No ratings yet</span>
+                  )}
+                </div>
+                <FollowButton
+                  creatorId={creator.id}
+                  initialFollowing={isFollowing}
+                  followerCount={followerCount}
+                  username={creator.username}
+                />
               </div>
             </div>
           </div>
@@ -255,9 +346,18 @@ export default function CreatorProfilePage() {
                       <span>{itinerary.destination}</span>
                     </div>
 
-                    <h3 className="text-xl font-semibold text-[#2C2C2C] mb-2 group-hover:text-[#0069f0] transition-colors">
+                    <h3 className="text-xl font-semibold text-[#2C2C2C] mb-1 group-hover:text-[#0069f0] transition-colors">
                       {itinerary.title}
                     </h3>
+
+                    {ratings[itinerary.id] && (
+                      <p className="text-sm text-amber-600 font-medium mb-2">
+                        ★ {ratings[itinerary.id].avg}&nbsp;
+                        <span className="text-gray-400 font-normal">
+                          ({ratings[itinerary.id].count} {ratings[itinerary.id].count === 1 ? 'review' : 'reviews'})
+                        </span>
+                      </p>
+                    )}
 
                     <p className="text-gray-600 text-[15px] leading-relaxed mb-4 line-clamp-3">
                       {itinerary.description}

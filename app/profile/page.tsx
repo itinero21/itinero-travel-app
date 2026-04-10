@@ -35,7 +35,6 @@ export default function ProfilePage() {
   const [username, setUsername] = useState('')
   const [bio, setBio] = useState('')
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
   const [toastMessage, setToastMessage] = useState<{
     text: string
     type: 'success' | 'error' | 'info'
@@ -84,7 +83,7 @@ export default function ProfilePage() {
         const sortedData = (data || []).map(itinerary => ({
           ...itinerary,
           itinerary_days: (itinerary.itinerary_days || []).sort(
-            (a, b) => a.day_number - b.day_number
+            (a: ItineraryDay, b: ItineraryDay) => a.day_number - b.day_number
           )
         }))
 
@@ -109,12 +108,11 @@ export default function ProfilePage() {
 
   const handleSave = async () => {
     if (!username.trim()) {
-      setMessage('Username is required')
+      setToastMessage({ text: 'Username is required', type: 'error' })
       return
     }
 
     setSaving(true)
-    setMessage('')
 
     try {
       const { error } = await supabase
@@ -171,12 +169,22 @@ export default function ProfilePage() {
               My Profile
             </h1>
             {!editing && (
-              <button
-                onClick={() => setEditing(true)}
-                className="bg-[#2C2C2C] text-white px-6 py-2.5 rounded-full text-[15px] font-medium hover:bg-[#1a1a1a] transition-colors"
-              >
-                Edit Profile
-              </button>
+              <div className="flex gap-3">
+                {userProfile.role === 'experienced_traveller' && (
+                  <Link
+                    href="/dashboard"
+                    className="bg-[#0069f0] text-white px-6 py-2.5 rounded-full text-[15px] font-medium hover:bg-[#0052c7] transition-colors"
+                  >
+                    Go to Dashboard
+                  </Link>
+                )}
+                <button
+                  onClick={() => setEditing(true)}
+                  className="bg-[#2C2C2C] text-white px-6 py-2.5 rounded-full text-[15px] font-medium hover:bg-[#1a1a1a] transition-colors"
+                >
+                  Edit Profile
+                </button>
+              </div>
             )}
           </div>
 
@@ -223,7 +231,6 @@ export default function ProfilePage() {
                     setEditing(false)
                     setUsername(userProfile.username || '')
                     setBio(userProfile.bio || '')
-                    setMessage('')
                   }}
                   className="px-6 py-2.5 border border-gray-200 rounded-full text-[15px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
                 >

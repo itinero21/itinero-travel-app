@@ -7,29 +7,47 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Toast from '@/components/Toast'
 
+interface LinkEntry {
+  url: string
+  label: string
+  category: string
+}
+
+const LINK_CATEGORIES = [
+  { value: 'hotel', label: 'Hotel' },
+  { value: 'flight', label: 'Flight' },
+  { value: 'tour', label: 'Tour' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'gear', label: 'Gear' },
+  { value: 'restaurant', label: 'Restaurant' },
+  { value: 'other', label: 'Other' },
+]
+
 export default function AddItineraryPage() {
-  const { user, userProfile, loading } = useAuth()
+  const { user, loading } = useAuth()
   const router = useRouter()
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     destination: '',
+    budget: '',
     start_date: '',
     end_date: '',
     recommendations: '',
     is_public: true,
   })
   const [photoUrls, setPhotoUrls] = useState<string[]>([''])
-  const [links, setLinks] = useState<string[]>([''])
+  const [links, setLinks] = useState<LinkEntry[]>([{ url: '', label: '', category: 'other' }])
   const [days, setDays] = useState<Array<{ title: string; activities: string[] }>>([
     { title: 'Day 1', activities: [''] }
   ])
   const [submitting, setSubmitting] = useState(false)
-  const [message, setMessage] = useState('')
   const [toastMessage, setToastMessage] = useState<{
     text: string
     type: 'success' | 'error' | 'info'
   } | null>(null)
+  const [showAffiliateTip, setShowAffiliateTip] = useState(false)
+  const [linkValidation, setLinkValidation] = useState<Record<number, 'valid' | 'invalid' | ''>>({})
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -55,7 +73,6 @@ export default function AddItineraryPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
-    setMessage('')
 
     // Validation
     if (!formData.title.trim()) {
@@ -83,9 +100,9 @@ export default function AddItineraryPage() {
     try {
       // Filter out empty photo URLs and links
       const validPhotos = photoUrls.filter(url => url.trim() !== '')
-      const validLinks = links.filter(link => link.trim() !== '')
+      const validLinks = links.filter(l => l.url.trim() !== '')
 
-      // Create itinerary first
+      // Create itinerary — links column left null for new itineraries (rich links stored in itinerary_links)
       const { data: itinerary, error: itineraryError } = await supabase
         .from('itineraries')
         .insert([
@@ -94,11 +111,12 @@ export default function AddItineraryPage() {
             title: formData.title,
             description: formData.description,
             destination: formData.destination,
+            budget: formData.budget.trim() || null,
             start_date: formData.start_date || null,
             end_date: formData.end_date || null,
             recommendations: formData.recommendations || null,
             photos: validPhotos.length > 0 ? validPhotos : null,
-            links: validLinks.length > 0 ? validLinks : null,
+            links: null,
             is_public: formData.is_public,
           },
         ])
@@ -106,6 +124,21 @@ export default function AddItineraryPage() {
         .single()
 
       if (itineraryError) throw itineraryError
+
+      // Insert rich links into itinerary_links table
+      if (validLinks.length > 0) {
+        const { error: linksError } = await supabase
+          .from('itinerary_links')
+          .insert(
+            validLinks.map((l) => ({
+              itinerary_id: itinerary.id,
+              url: l.url.trim(),
+              label: l.label.trim() || null,
+              category: l.category || 'other',
+            }))
+          )
+        if (linksError) throw linksError
+      }
 
       // Create days for the itinerary
       const daysToInsert = days
@@ -130,19 +163,29 @@ export default function AddItineraryPage() {
         title: '',
         description: '',
         destination: '',
+        budget: '',
         start_date: '',
         end_date: '',
         recommendations: '',
         is_public: true,
       })
       setPhotoUrls([''])
-      setLinks([''])
+      setLinks([{ url: '', label: '', category: 'other' }])
       setDays([{ title: 'Day 1', activities: [''] }])
+      setLinkValidation({})
 
-      // Redirect to home page after 1.5 seconds
-      setTimeout(() => {
-        router.push('/')
-      }, 1500)
+      if (validLinks.length === 0) {
+        // Show nudge after 2s, redirect after 4s to give user time to read it
+        setTimeout(() => {
+          setToastMessage({
+            text: "Tip: itineraries with affiliate links earn more — you can add them by editing your trip",
+            type: 'info',
+          })
+        }, 2000)
+        setTimeout(() => router.push('/'), 4000)
+      } else {
+        setTimeout(() => router.push('/'), 1500)
+      }
     } catch (error: any) {
       setToastMessage({ text: error.message || 'Error creating itinerary', type: 'error' })
     } finally {
@@ -175,17 +218,45 @@ export default function AddItineraryPage() {
   }
 
   const addLink = () => {
-    setLinks([...links, ''])
+    setLinks([...links, { url: '', label: '', category: 'other' }])
   }
 
   const removeLink = (index: number) => {
     setLinks(links.filter((_, i) => i !== index))
   }
 
-  const updateLink = (index: number, value: string) => {
+  const updateLink = (index: number, field: keyof LinkEntry, value: string) => {
     const newLinks = [...links]
-    newLinks[index] = value
+    newLinks[index] = { ...newLinks[index], [field]: value }
     setLinks(newLinks)
+    // Clear validation state when user types
+    if (field === 'url') {
+      setLinkValidation(prev => ({ ...prev, [index]: '' }))
+    }
+  }
+
+  const handleLinkUrlBlur = (index: number) => {
+    const raw = links[index].url.trim()
+    if (!raw) {
+      setLinkValidation(prev => ({ ...prev, [index]: '' }))
+      return
+    }
+    // Auto-prepend https:// if no protocol
+    let normalized = raw
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+      normalized = 'https://' + raw
+      const newLinks = [...links]
+      newLinks[index] = { ...newLinks[index], url: normalized }
+      setLinks(newLinks)
+    }
+    // Validate
+    try {
+      const parsed = new URL(normalized)
+      const valid = parsed.hostname.includes('.')
+      setLinkValidation(prev => ({ ...prev, [index]: valid ? 'valid' : 'invalid' }))
+    } catch {
+      setLinkValidation(prev => ({ ...prev, [index]: 'invalid' }))
+    }
   }
 
   // Day management functions
@@ -351,6 +422,24 @@ export default function AddItineraryPage() {
             </div>
           </div>
 
+          <div>
+            <label
+              htmlFor="budget"
+              className="block text-sm font-medium text-[#2C2C2C] mb-2"
+            >
+              Estimated Budget
+            </label>
+            <input
+              id="budget"
+              name="budget"
+              type="text"
+              value={formData.budget}
+              onChange={handleChange}
+              className="w-full px-4 py-3.5 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all"
+              placeholder="e.g. $1,500 total, ~$200/day, Budget-friendly"
+            />
+          </div>
+
           {/* Recommendations */}
           <div>
             <label
@@ -411,27 +500,122 @@ export default function AddItineraryPage() {
             <label className="block text-sm font-medium text-[#2C2C2C] mb-2">
               Useful Links
             </label>
-            <div className="space-y-3">
-              {links.map((link, index) => (
-                <div key={index} className="flex gap-2">
-                  <input
-                    type="url"
-                    value={link}
-                    onChange={(e) => updateLink(index, e.target.value)}
-                    placeholder="https://example.com"
-                    className="flex-1 px-4 py-3.5 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all"
-                  />
-                  {links.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeLink(index)}
-                      className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              ))}
+
+            {/* Collapsible affiliate tip box */}
+            <button
+              type="button"
+              onClick={() => setShowAffiliateTip((v) => !v)}
+              className="w-full text-left mb-4 border-l-4 border-blue-400 bg-blue-50 rounded-lg px-4 py-3 flex items-center justify-between hover:bg-blue-100 transition-colors"
+            >
+              <span className="text-sm font-medium text-blue-800">
+                How to earn with affiliate links
+              </span>
+              <svg
+                className={`w-4 h-4 text-blue-600 flex-shrink-0 transition-transform duration-200 ${showAffiliateTip ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showAffiliateTip && (
+              <div className="mb-4 border-l-4 border-blue-400 bg-blue-50 rounded-lg px-4 py-3 text-sm text-blue-900">
+                <p className="mb-2">
+                  Add affiliate links from these programs and earn commission when travellers book:
+                </p>
+                <ul className="space-y-1 mb-3">
+                  {[
+                    'Booking.com Partner Program',
+                    'GetYourGuide Affiliate',
+                    'Skyscanner Affiliate',
+                    'Amazon Associates (for gear)',
+                    'Viator Affiliate Program',
+                  ].map((program) => (
+                    <li key={program} className="flex items-center gap-2">
+                      <span className="text-blue-500">•</span>
+                      {program}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-blue-700 italic">
+                  Tip: Label your links clearly — &quot;Hotel I stayed at&quot; converts better than a raw URL.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              {links.map((link, index) => {
+                const validation = linkValidation[index]
+                return (
+                  <div key={index} className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 relative">
+                        <input
+                          type="url"
+                          value={link.url}
+                          onChange={(e) => updateLink(index, 'url', e.target.value)}
+                          onBlur={() => handleLinkUrlBlur(index)}
+                          placeholder="https://example.com"
+                          className={`w-full px-4 py-3 border rounded-xl text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all ${
+                            validation === 'invalid'
+                              ? 'border-amber-400'
+                              : validation === 'valid'
+                              ? 'border-green-400'
+                              : 'border-gray-200'
+                          }`}
+                        />
+                        {validation === 'valid' && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500 text-base">
+                            ✓
+                          </span>
+                        )}
+                        {validation === 'invalid' && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-amber-500 text-base">
+                            ⚠
+                          </span>
+                        )}
+                      </div>
+                      {links.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeLink(index)}
+                          className="px-3 py-3 text-red-500 hover:bg-red-50 rounded-xl transition-colors flex-shrink-0 text-sm"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    {validation === 'invalid' && (
+                      <p className="text-xs text-amber-600">
+                        This doesn&apos;t look like a valid URL — check it includes a domain (e.g. booking.com)
+                      </p>
+                    )}
+                    <div className="flex gap-3">
+                      <input
+                        type="text"
+                        value={link.label}
+                        onChange={(e) => updateLink(index, 'label', e.target.value)}
+                        placeholder="Give this link a label"
+                        className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all"
+                      />
+                      <select
+                        value={link.category}
+                        onChange={(e) => updateLink(index, 'category', e.target.value)}
+                        className="px-4 py-2.5 border border-gray-200 rounded-xl text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all"
+                      >
+                        {LINK_CATEGORIES.map((cat) => (
+                          <option key={cat.value} value={cat.value}>
+                            {cat.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )
+              })}
               <button
                 type="button"
                 onClick={addLink}
