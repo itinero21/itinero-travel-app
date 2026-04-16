@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Toast from '@/components/Toast'
 
@@ -23,9 +23,12 @@ const LINK_CATEGORIES = [
   { value: 'other', label: 'Other' },
 ]
 
-export default function AddItineraryPage() {
+function AddItineraryForm() {
   const { user, loading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const editId = searchParams.get('edit')
+
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -42,6 +45,7 @@ export default function AddItineraryPage() {
     { title: 'Day 1', activities: [''] }
   ])
   const [submitting, setSubmitting] = useState(false)
+  const [loadingEdit, setLoadingEdit] = useState(!!editId)
   const [toastMessage, setToastMessage] = useState<{
     text: string
     type: 'success' | 'error' | 'info'
@@ -56,8 +60,96 @@ export default function AddItineraryPage() {
     }
   }, [user, loading, router])
 
-  // Show loading state while checking auth
-  if (loading) {
+  // Load existing itinerary in edit mode
+  useEffect(() => {
+    if (!editId || !user) return
+
+    async function loadItinerary() {
+      setLoadingEdit(true)
+      try {
+        const { data, error } = await supabase
+          .from('itineraries')
+          .select('*')
+          .eq('id', editId)
+          .single()
+
+        if (error || !data) {
+          router.push('/browse')
+          return
+        }
+
+        // Verify ownership
+        if (data.user_id !== user!.id) {
+          router.push('/browse')
+          return
+        }
+
+        // Pre-fill core fields
+        setFormData({
+          title: data.title || '',
+          description: data.description || '',
+          destination: data.destination || '',
+          budget: data.budget || '',
+          start_date: data.start_date || '',
+          end_date: data.end_date || '',
+          recommendations: data.recommendations || '',
+          is_public: data.is_public,
+        })
+        setPhotoUrls(data.photos && data.photos.length > 0 ? data.photos : [''])
+
+        // Fetch days + rich links in parallel
+        const [{ data: daysData }, { data: richLinksData }] = await Promise.all([
+          supabase
+            .from('itinerary_days')
+            .select('title, activities')
+            .eq('itinerary_id', editId)
+            .order('day_number'),
+          supabase
+            .from('itinerary_links')
+            .select('url, label, category')
+            .eq('itinerary_id', editId)
+            .order('created_at'),
+        ])
+
+        if (daysData && daysData.length > 0) {
+          setDays(
+            daysData.map((d) => ({
+              title: d.title,
+              activities: d.activities && d.activities.length > 0 ? d.activities : [''],
+            }))
+          )
+        }
+
+        if (richLinksData && richLinksData.length > 0) {
+          setLinks(
+            richLinksData.map((l) => ({
+              url: l.url,
+              label: l.label || '',
+              category: l.category || 'other',
+            }))
+          )
+        } else if (data.links && data.links.length > 0) {
+          // Fall back to legacy links array
+          setLinks(
+            data.links.map((url: string) => ({
+              url,
+              label: '',
+              category: 'other',
+            }))
+          )
+        }
+      } catch (err) {
+        console.error('Error loading itinerary for edit:', err)
+        router.push('/browse')
+      } finally {
+        setLoadingEdit(false)
+      }
+    }
+
+    loadItinerary()
+  }, [editId, user, router])
+
+  if (loading || loadingEdit) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-xl">Loading...</p>
@@ -65,16 +157,12 @@ export default function AddItineraryPage() {
     )
   }
 
-  // Don't render the form if user is not logged in
-  if (!user) {
-    return null
-  }
+  if (!user) return null
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setSubmitting(true)
 
-    // Validation
     if (!formData.title.trim()) {
       setToastMessage({ text: 'Please enter a trip name', type: 'error' })
       setSubmitting(false)
@@ -98,16 +186,21 @@ export default function AddItineraryPage() {
     }
 
     try {
-      // Filter out empty photo URLs and links
-      const validPhotos = photoUrls.filter(url => url.trim() !== '')
-      const validLinks = links.filter(l => l.url.trim() !== '')
+      const validPhotos = photoUrls.filter((url) => url.trim() !== '')
+      const validLinks = links.filter((l) => l.url.trim() !== '')
+      const daysToInsert = days
+        .filter((day) => day.title.trim() !== '' && day.activities.some((a) => a.trim() !== ''))
+        .map((day, index) => ({
+          day_number: index + 1,
+          title: day.title,
+          activities: day.activities.filter((a) => a.trim() !== ''),
+        }))
 
-      // Create itinerary — links column left null for new itineraries (rich links stored in itinerary_links)
-      const { data: itinerary, error: itineraryError } = await supabase
-        .from('itineraries')
-        .insert([
-          {
-            user_id: user.id,
+      if (editId) {
+        // ── EDIT MODE ──────────────────────────────────────────────
+        const { error: updateError } = await supabase
+          .from('itineraries')
+          .update({
             title: formData.title,
             description: formData.description,
             destination: formData.destination,
@@ -116,86 +209,130 @@ export default function AddItineraryPage() {
             end_date: formData.end_date || null,
             recommendations: formData.recommendations || null,
             photos: validPhotos.length > 0 ? validPhotos : null,
-            links: null,
             is_public: formData.is_public,
-          },
-        ])
-        .select()
-        .single()
-
-      if (itineraryError) throw itineraryError
-
-      // Insert rich links into itinerary_links table
-      if (validLinks.length > 0) {
-        const { error: linksError } = await supabase
-          .from('itinerary_links')
-          .insert(
-            validLinks.map((l) => ({
-              itinerary_id: itinerary.id,
-              url: l.url.trim(),
-              label: l.label.trim() || null,
-              category: l.category || 'other',
-            }))
-          )
-        if (linksError) throw linksError
-      }
-
-      // Create days for the itinerary
-      const daysToInsert = days
-        .filter(day => day.title.trim() !== '' && day.activities.some(a => a.trim() !== ''))
-        .map((day, index) => ({
-          itinerary_id: itinerary.id,
-          day_number: index + 1,
-          title: day.title,
-          activities: day.activities.filter(a => a.trim() !== ''),
-        }))
-
-      if (daysToInsert.length > 0) {
-        const { error: daysError } = await supabase
-          .from('itinerary_days')
-          .insert(daysToInsert)
-
-        if (daysError) throw daysError
-      }
-
-      setToastMessage({ text: 'Itinerary created successfully!', type: 'success' })
-      setFormData({
-        title: '',
-        description: '',
-        destination: '',
-        budget: '',
-        start_date: '',
-        end_date: '',
-        recommendations: '',
-        is_public: true,
-      })
-      setPhotoUrls([''])
-      setLinks([{ url: '', label: '', category: 'other' }])
-      setDays([{ title: 'Day 1', activities: [''] }])
-      setLinkValidation({})
-
-      if (validLinks.length === 0) {
-        // Show nudge after 2s, redirect after 4s to give user time to read it
-        setTimeout(() => {
-          setToastMessage({
-            text: "Tip: itineraries with affiliate links earn more — you can add them by editing your trip",
-            type: 'info',
           })
-        }, 2000)
-        setTimeout(() => router.push('/'), 4000)
+          .eq('id', editId)
+
+        if (updateError) throw updateError
+
+        // Replace days: delete all then re-insert
+        const { error: deleteDaysError } = await supabase
+          .from('itinerary_days')
+          .delete()
+          .eq('itinerary_id', editId)
+        if (deleteDaysError) throw deleteDaysError
+
+        if (daysToInsert.length > 0) {
+          const { error: daysError } = await supabase
+            .from('itinerary_days')
+            .insert(daysToInsert.map((d) => ({ ...d, itinerary_id: Number(editId) })))
+          if (daysError) throw daysError
+        }
+
+        // Replace links: delete all then re-insert
+        const { error: deleteLinksError } = await supabase
+          .from('itinerary_links')
+          .delete()
+          .eq('itinerary_id', editId)
+        if (deleteLinksError) throw deleteLinksError
+
+        if (validLinks.length > 0) {
+          const { error: linksError } = await supabase
+            .from('itinerary_links')
+            .insert(
+              validLinks.map((l) => ({
+                itinerary_id: Number(editId),
+                url: l.url.trim(),
+                label: l.label.trim() || null,
+                category: l.category || 'other',
+              }))
+            )
+          if (linksError) throw linksError
+        }
+
+        setToastMessage({ text: 'Changes saved!', type: 'success' })
+        setTimeout(() => router.push(`/itinerary/${editId}`), 1500)
       } else {
-        setTimeout(() => router.push('/'), 1500)
+        // ── CREATE MODE ────────────────────────────────────────────
+        const { data: itinerary, error: itineraryError } = await supabase
+          .from('itineraries')
+          .insert([
+            {
+              user_id: user.id,
+              title: formData.title,
+              description: formData.description,
+              destination: formData.destination,
+              budget: formData.budget.trim() || null,
+              start_date: formData.start_date || null,
+              end_date: formData.end_date || null,
+              recommendations: formData.recommendations || null,
+              photos: validPhotos.length > 0 ? validPhotos : null,
+              links: null,
+              is_public: formData.is_public,
+            },
+          ])
+          .select()
+          .single()
+
+        if (itineraryError) throw itineraryError
+
+        if (validLinks.length > 0) {
+          const { error: linksError } = await supabase
+            .from('itinerary_links')
+            .insert(
+              validLinks.map((l) => ({
+                itinerary_id: itinerary.id,
+                url: l.url.trim(),
+                label: l.label.trim() || null,
+                category: l.category || 'other',
+              }))
+            )
+          if (linksError) throw linksError
+        }
+
+        if (daysToInsert.length > 0) {
+          const { error: daysError } = await supabase
+            .from('itinerary_days')
+            .insert(daysToInsert.map((d) => ({ ...d, itinerary_id: itinerary.id })))
+          if (daysError) throw daysError
+        }
+
+        setToastMessage({ text: 'Itinerary created successfully!', type: 'success' })
+        setFormData({
+          title: '',
+          description: '',
+          destination: '',
+          budget: '',
+          start_date: '',
+          end_date: '',
+          recommendations: '',
+          is_public: true,
+        })
+        setPhotoUrls([''])
+        setLinks([{ url: '', label: '', category: 'other' }])
+        setDays([{ title: 'Day 1', activities: [''] }])
+        setLinkValidation({})
+
+        if (validLinks.length === 0) {
+          setTimeout(() => {
+            setToastMessage({
+              text: 'Tip: itineraries with affiliate links earn more — you can add them by editing your trip',
+              type: 'info',
+            })
+          }, 2000)
+          setTimeout(() => router.push('/'), 4000)
+        } else {
+          setTimeout(() => router.push('/'), 1500)
+        }
       }
     } catch (error: any) {
-      setToastMessage({ text: error.message || 'Error creating itinerary', type: 'error' })
+      setToastMessage({ text: error.message || 'Something went wrong', type: 'error' })
     } finally {
       setSubmitting(false)
     }
   }
 
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  ) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target
     setFormData({
       ...formData,
@@ -203,93 +340,68 @@ export default function AddItineraryPage() {
     })
   }
 
-  const addPhotoUrl = () => {
-    setPhotoUrls([...photoUrls, ''])
-  }
-
-  const removePhotoUrl = (index: number) => {
-    setPhotoUrls(photoUrls.filter((_, i) => i !== index))
-  }
-
+  const addPhotoUrl = () => setPhotoUrls([...photoUrls, ''])
+  const removePhotoUrl = (index: number) => setPhotoUrls(photoUrls.filter((_, i) => i !== index))
   const updatePhotoUrl = (index: number, value: string) => {
-    const newPhotos = [...photoUrls]
-    newPhotos[index] = value
-    setPhotoUrls(newPhotos)
+    const next = [...photoUrls]
+    next[index] = value
+    setPhotoUrls(next)
   }
 
-  const addLink = () => {
-    setLinks([...links, { url: '', label: '', category: 'other' }])
-  }
-
-  const removeLink = (index: number) => {
-    setLinks(links.filter((_, i) => i !== index))
-  }
-
+  const addLink = () => setLinks([...links, { url: '', label: '', category: 'other' }])
+  const removeLink = (index: number) => setLinks(links.filter((_, i) => i !== index))
   const updateLink = (index: number, field: keyof LinkEntry, value: string) => {
-    const newLinks = [...links]
-    newLinks[index] = { ...newLinks[index], [field]: value }
-    setLinks(newLinks)
-    // Clear validation state when user types
-    if (field === 'url') {
-      setLinkValidation(prev => ({ ...prev, [index]: '' }))
-    }
+    const next = [...links]
+    next[index] = { ...next[index], [field]: value }
+    setLinks(next)
+    if (field === 'url') setLinkValidation((prev) => ({ ...prev, [index]: '' }))
   }
 
   const handleLinkUrlBlur = (index: number) => {
     const raw = links[index].url.trim()
     if (!raw) {
-      setLinkValidation(prev => ({ ...prev, [index]: '' }))
+      setLinkValidation((prev) => ({ ...prev, [index]: '' }))
       return
     }
-    // Auto-prepend https:// if no protocol
     let normalized = raw
     if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
       normalized = 'https://' + raw
-      const newLinks = [...links]
-      newLinks[index] = { ...newLinks[index], url: normalized }
-      setLinks(newLinks)
+      const next = [...links]
+      next[index] = { ...next[index], url: normalized }
+      setLinks(next)
     }
-    // Validate
     try {
       const parsed = new URL(normalized)
-      const valid = parsed.hostname.includes('.')
-      setLinkValidation(prev => ({ ...prev, [index]: valid ? 'valid' : 'invalid' }))
+      setLinkValidation((prev) => ({
+        ...prev,
+        [index]: parsed.hostname.includes('.') ? 'valid' : 'invalid',
+      }))
     } catch {
-      setLinkValidation(prev => ({ ...prev, [index]: 'invalid' }))
+      setLinkValidation((prev) => ({ ...prev, [index]: 'invalid' }))
     }
   }
 
-  // Day management functions
-  const addDay = () => {
-    setDays([...days, { title: `Day ${days.length + 1}`, activities: [''] }])
+  const addDay = () => setDays([...days, { title: `Day ${days.length + 1}`, activities: [''] }])
+  const removeDay = (i: number) => setDays(days.filter((_, idx) => idx !== i))
+  const updateDayTitle = (i: number, value: string) => {
+    const next = [...days]
+    next[i].title = value
+    setDays(next)
   }
-
-  const removeDay = (dayIndex: number) => {
-    setDays(days.filter((_, i) => i !== dayIndex))
+  const addActivity = (dayIdx: number) => {
+    const next = [...days]
+    next[dayIdx].activities.push('')
+    setDays(next)
   }
-
-  const updateDayTitle = (dayIndex: number, value: string) => {
-    const newDays = [...days]
-    newDays[dayIndex].title = value
-    setDays(newDays)
+  const removeActivity = (dayIdx: number, actIdx: number) => {
+    const next = [...days]
+    next[dayIdx].activities = next[dayIdx].activities.filter((_, i) => i !== actIdx)
+    setDays(next)
   }
-
-  const addActivity = (dayIndex: number) => {
-    const newDays = [...days]
-    newDays[dayIndex].activities.push('')
-    setDays(newDays)
-  }
-
-  const removeActivity = (dayIndex: number, activityIndex: number) => {
-    const newDays = [...days]
-    newDays[dayIndex].activities = newDays[dayIndex].activities.filter((_, i) => i !== activityIndex)
-    setDays(newDays)
-  }
-
-  const updateActivity = (dayIndex: number, activityIndex: number, value: string) => {
-    const newDays = [...days]
-    newDays[dayIndex].activities[activityIndex] = value
-    setDays(newDays)
+  const updateActivity = (dayIdx: number, actIdx: number, value: string) => {
+    const next = [...days]
+    next[dayIdx].activities[actIdx] = value
+    setDays(next)
   }
 
   return (
@@ -301,7 +413,8 @@ export default function AddItineraryPage() {
           onClose={() => setToastMessage(null)}
         />
       )}
-      {/* Navigation Bar */}
+
+      {/* Navigation */}
       <nav className="border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-6 py-5">
           <div className="flex justify-between items-center">
@@ -309,32 +422,32 @@ export default function AddItineraryPage() {
               Itinero
             </Link>
             <Link
-              href="/"
+              href={editId ? `/itinerary/${editId}` : '/'}
               className="text-sm text-gray-600 hover:text-gray-900 transition-colors"
             >
-              Back to home
+              {editId ? '← Back to itinerary' : 'Back to home'}
             </Link>
           </div>
         </div>
       </nav>
 
-      {/* Form Section */}
+      {/* Form */}
       <div className="max-w-3xl mx-auto px-6 py-16">
         <div className="mb-12">
           <h1 className="text-5xl font-semibold text-[#2C2C2C] mb-4">
-            Create New Trip
+            {editId ? 'Edit itinerary' : 'Create New Trip'}
           </h1>
           <p className="text-xl text-gray-600">
-            Plan your next adventure with all the details
+            {editId
+              ? 'Update your trip details below'
+              : 'Plan your next adventure with all the details'}
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-8">
+          {/* Trip Name */}
           <div>
-            <label
-              htmlFor="title"
-              className="block text-sm font-medium text-[#2C2C2C] mb-2"
-            >
+            <label htmlFor="title" className="block text-sm font-medium text-[#2C2C2C] mb-2">
               Trip Name *
             </label>
             <input
@@ -349,11 +462,9 @@ export default function AddItineraryPage() {
             />
           </div>
 
+          {/* Destination */}
           <div>
-            <label
-              htmlFor="destination"
-              className="block text-sm font-medium text-[#2C2C2C] mb-2"
-            >
+            <label htmlFor="destination" className="block text-sm font-medium text-[#2C2C2C] mb-2">
               Destination *
             </label>
             <input
@@ -368,11 +479,9 @@ export default function AddItineraryPage() {
             />
           </div>
 
+          {/* Description */}
           <div>
-            <label
-              htmlFor="description"
-              className="block text-sm font-medium text-[#2C2C2C] mb-2"
-            >
+            <label htmlFor="description" className="block text-sm font-medium text-[#2C2C2C] mb-2">
               Description
             </label>
             <textarea
@@ -386,12 +495,10 @@ export default function AddItineraryPage() {
             />
           </div>
 
+          {/* Dates */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label
-                htmlFor="start_date"
-                className="block text-sm font-medium text-[#2C2C2C] mb-2"
-              >
+              <label htmlFor="start_date" className="block text-sm font-medium text-[#2C2C2C] mb-2">
                 Start Date
               </label>
               <input
@@ -403,12 +510,8 @@ export default function AddItineraryPage() {
                 className="w-full px-4 py-3.5 border border-gray-200 rounded-xl text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0069f0] focus:border-transparent transition-all"
               />
             </div>
-
             <div>
-              <label
-                htmlFor="end_date"
-                className="block text-sm font-medium text-[#2C2C2C] mb-2"
-              >
+              <label htmlFor="end_date" className="block text-sm font-medium text-[#2C2C2C] mb-2">
                 End Date
               </label>
               <input
@@ -422,11 +525,9 @@ export default function AddItineraryPage() {
             </div>
           </div>
 
+          {/* Budget */}
           <div>
-            <label
-              htmlFor="budget"
-              className="block text-sm font-medium text-[#2C2C2C] mb-2"
-            >
+            <label htmlFor="budget" className="block text-sm font-medium text-[#2C2C2C] mb-2">
               Estimated Budget
             </label>
             <input
@@ -442,10 +543,7 @@ export default function AddItineraryPage() {
 
           {/* Recommendations */}
           <div>
-            <label
-              htmlFor="recommendations"
-              className="block text-sm font-medium text-[#2C2C2C] mb-2"
-            >
+            <label htmlFor="recommendations" className="block text-sm font-medium text-[#2C2C2C] mb-2">
               Recommendations
             </label>
             <textarea
@@ -461,9 +559,7 @@ export default function AddItineraryPage() {
 
           {/* Photo URLs */}
           <div>
-            <label className="block text-sm font-medium text-[#2C2C2C] mb-2">
-              Photo URLs
-            </label>
+            <label className="block text-sm font-medium text-[#2C2C2C] mb-2">Photo URLs</label>
             <div className="space-y-3">
               {photoUrls.map((photo, index) => (
                 <div key={index} className="flex gap-2">
@@ -497,11 +593,9 @@ export default function AddItineraryPage() {
 
           {/* Links */}
           <div>
-            <label className="block text-sm font-medium text-[#2C2C2C] mb-2">
-              Useful Links
-            </label>
+            <label className="block text-sm font-medium text-[#2C2C2C] mb-2">Useful Links</label>
 
-            {/* Collapsible affiliate tip box */}
+            {/* Collapsible affiliate tip */}
             <button
               type="button"
               onClick={() => setShowAffiliateTip((v) => !v)}
@@ -626,12 +720,10 @@ export default function AddItineraryPage() {
             </div>
           </div>
 
-          {/* Day-by-Day Itinerary */}
+          {/* Day-by-Day Plan */}
           <div className="border-t border-gray-200 pt-8">
             <div className="flex items-center justify-between mb-4">
-              <label className="block text-sm font-medium text-[#2C2C2C]">
-                Day-by-Day Plan
-              </label>
+              <label className="block text-sm font-medium text-[#2C2C2C]">Day-by-Day Plan</label>
               <button
                 type="button"
                 onClick={addDay}
@@ -640,7 +732,6 @@ export default function AddItineraryPage() {
                 + Add Day
               </button>
             </div>
-
             <div className="space-y-6">
               {days.map((day, dayIndex) => (
                 <div key={dayIndex} className="bg-gray-50 border border-gray-200 rounded-xl p-6">
@@ -662,7 +753,6 @@ export default function AddItineraryPage() {
                       </button>
                     )}
                   </div>
-
                   <div className="space-y-2">
                     <label className="block text-sm text-gray-600 mb-2">Activities</label>
                     {day.activities.map((activity, activityIndex) => (
@@ -713,16 +803,23 @@ export default function AddItineraryPage() {
             </label>
           </div>
 
+          {/* Submit */}
           <div className="flex gap-4 pt-4">
             <button
               type="submit"
               disabled={submitting}
               className="flex-1 bg-[#2C2C2C] text-white py-3.5 px-6 rounded-full text-[15px] font-medium hover:bg-[#1a1a1a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {submitting ? 'Creating your trip...' : 'Create Trip'}
+              {submitting
+                ? editId
+                  ? 'Saving changes...'
+                  : 'Creating your trip...'
+                : editId
+                ? 'Save changes'
+                : 'Create Trip'}
             </button>
             <Link
-              href="/"
+              href={editId ? `/itinerary/${editId}` : '/'}
               className="px-8 py-3.5 border border-gray-200 rounded-full text-[15px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
             >
               Cancel
@@ -731,5 +828,19 @@ export default function AddItineraryPage() {
         </form>
       </div>
     </div>
+  )
+}
+
+export default function AddItineraryPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <p className="text-xl">Loading...</p>
+        </div>
+      }
+    >
+      <AddItineraryForm />
+    </Suspense>
   )
 }
