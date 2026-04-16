@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import StarRating from '@/components/StarRating'
 import Toast from '@/components/Toast'
+import MarkUsedButton from '@/components/MarkUsedButton'
 
 interface ExistingReview {
   id: number
@@ -17,6 +18,8 @@ interface ReviewFormProps {
   itineraryOwnerId: string
   existingReview: ExistingReview | null
   onSubmit: () => void
+  hasUsed?: boolean
+  onMarkedUsed?: () => void
 }
 
 export default function ReviewForm({
@@ -24,6 +27,8 @@ export default function ReviewForm({
   itineraryOwnerId,
   existingReview,
   onSubmit,
+  hasUsed,
+  onMarkedUsed,
 }: ReviewFormProps) {
   const { user } = useAuth()
   const [rating, setRating] = useState(existingReview?.rating ?? 0)
@@ -36,6 +41,31 @@ export default function ReviewForm({
 
   // Don't render for the owner or if not logged in
   if (!user || user.id === itineraryOwnerId) return null
+
+  // Gate: show prompt if user hasn't marked this trip as used
+  if (hasUsed === false) {
+    return (
+      <div className="bg-gray-50 border border-gray-200 rounded-xl p-6">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl">🗺️</span>
+          <div>
+            <p className="font-semibold text-[#2C2C2C] mb-1">
+              Have you used this itinerary?
+            </p>
+            <p className="text-sm text-gray-500 mb-4">
+              Mark this trip as used before leaving a review.
+            </p>
+            <MarkUsedButton
+              itineraryId={itineraryId}
+              itineraryOwnerId={itineraryOwnerId}
+              initialUsed={false}
+              onMarkedUsed={onMarkedUsed}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const isEditing = !!existingReview
 

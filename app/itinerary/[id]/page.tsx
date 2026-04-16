@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import Toast from '@/components/Toast'
 import SaveButton from '@/components/SaveButton'
+import MarkUsedButton from '@/components/MarkUsedButton'
 import ReviewForm from '@/components/ReviewForm'
 import ReviewsList from '@/components/ReviewsList'
 
@@ -65,6 +66,8 @@ export default function ItineraryDetailPage() {
     rating: number
     review_text: string | null
   } | null>(null)
+  const [hasUsed, setHasUsed] = useState(false)
+  const [usedCount, setUsedCount] = useState(0)
   const [reviewRefreshKey, setReviewRefreshKey] = useState(0)
   const [toastMessage, setToastMessage] = useState<{
     text: string
@@ -123,8 +126,8 @@ export default function ItineraryDetailPage() {
           .order('created_at', { ascending: true })
         setRichLinks(richLinksData || [])
 
-        // Fetch total save count + review stats in parallel
-        const [{ count }, { data: ratingsData }] = await Promise.all([
+        // Fetch total save count + review stats + used count in parallel
+        const [{ count }, { data: ratingsData }, { count: usedTotal }] = await Promise.all([
           supabase
             .from('saved_itineraries')
             .select('*', { count: 'exact', head: true })
@@ -133,34 +136,44 @@ export default function ItineraryDetailPage() {
             .from('reviews')
             .select('rating')
             .eq('itinerary_id', params.id),
+          supabase
+            .from('used_itineraries')
+            .select('*', { count: 'exact', head: true })
+            .eq('itinerary_id', params.id),
         ])
         setSaveCount(count || 0)
+        setUsedCount(usedTotal || 0)
         if (ratingsData && ratingsData.length > 0) {
           const avg = ratingsData.reduce((sum, r) => sum + r.rating, 0) / ratingsData.length
           setAvgRating(Math.round(avg * 10) / 10)
           setReviewCount(ratingsData.length)
         }
 
-        // Fetch whether the current user has saved this
+        // Fetch user-specific data in parallel
         if (user) {
-          const { data: savedData } = await supabase
-            .from('saved_itineraries')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('itinerary_id', params.id)
-            .maybeSingle()
+          const [{ data: savedData }, { data: reviewData }, { data: usedData }] = await Promise.all([
+            supabase
+              .from('saved_itineraries')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('itinerary_id', params.id)
+              .maybeSingle(),
+            supabase
+              .from('reviews')
+              .select('id, rating, review_text')
+              .eq('user_id', user.id)
+              .eq('itinerary_id', params.id)
+              .maybeSingle(),
+            supabase
+              .from('used_itineraries')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('itinerary_id', params.id)
+              .maybeSingle(),
+          ])
           setIsSaved(!!savedData)
-        }
-
-        // Fetch current user's existing review
-        if (user) {
-          const { data: reviewData } = await supabase
-            .from('reviews')
-            .select('id, rating, review_text')
-            .eq('user_id', user.id)
-            .eq('itinerary_id', params.id)
-            .maybeSingle()
           setExistingReview(reviewData)
+          setHasUsed(!!usedData)
         }
 
         // Fetch creator profile
@@ -436,6 +449,15 @@ export default function ItineraryDetailPage() {
                 showCount={true}
                 count={saveCount}
               />
+              <MarkUsedButton
+                itineraryId={itinerary.id}
+                itineraryOwnerId={itinerary.user_id}
+                initialUsed={hasUsed}
+                onMarkedUsed={() => {
+                  setHasUsed(true)
+                  setUsedCount((c) => c + 1)
+                }}
+              />
               <span className={`px-4 py-2 rounded-full text-sm font-medium ${
                 itinerary.is_public
                   ? 'bg-green-100 text-green-700'
@@ -449,6 +471,11 @@ export default function ItineraryDetailPage() {
           {itinerary.description && (
             <p className="text-lg text-gray-700 leading-relaxed">
               {itinerary.description}
+            </p>
+          )}
+          {usedCount > 0 && (
+            <p className="mt-3 text-sm text-gray-500">
+              ✓ {usedCount} {usedCount === 1 ? 'traveller has' : 'travellers have'} used this itinerary
             </p>
           )}
         </div>
@@ -613,6 +640,11 @@ export default function ItineraryDetailPage() {
                   itineraryOwnerId={itinerary.user_id}
                   existingReview={existingReview}
                   onSubmit={() => setReviewRefreshKey((k) => k + 1)}
+                  hasUsed={user ? hasUsed : undefined}
+                  onMarkedUsed={() => {
+                    setHasUsed(true)
+                    setUsedCount((c) => c + 1)
+                  }}
                 />
               </div>
             )}

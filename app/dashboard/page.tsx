@@ -58,6 +58,7 @@ export default function DashboardPage() {
   const [recentReviews, setRecentReviews] = useState<RecentReview[]>([])
   const [linkPerformance, setLinkPerformance] = useState<LinkPerformance[]>([])
   const [clickTotals, setClickTotals] = useState<Record<number, number>>({})
+  const [usedCounts, setUsedCounts] = useState<Record<number, number>>({})
   const [showAllLinks, setShowAllLinks] = useState(false)
   const [followerCount, setFollowerCount] = useState(0)
   const [followingCount, setFollowingCount] = useState(0)
@@ -101,7 +102,7 @@ export default function DashboardPage() {
         // Fetch save counts + review ratings for all itineraries in parallel
         if (rows.length > 0) {
           const ids = rows.map((it) => it.id)
-          const [{ data: saveData }, { data: reviewData }, { data: linksData }] = await Promise.all([
+          const [{ data: saveData }, { data: reviewData }, { data: linksData }, { data: usedData }] = await Promise.all([
             supabase.from('saved_itineraries').select('itinerary_id').in('itinerary_id', ids),
             supabase.from('reviews').select('itinerary_id, rating').in('itinerary_id', ids),
             supabase
@@ -109,6 +110,7 @@ export default function DashboardPage() {
               .select('id, url, label, category, click_count, itinerary_id')
               .in('itinerary_id', ids)
               .order('click_count', { ascending: false }),
+            supabase.from('used_itineraries').select('itinerary_id').in('itinerary_id', ids),
           ])
 
           const counts: Record<number, number> = {}
@@ -149,6 +151,15 @@ export default function DashboardPage() {
               totals[l.itinerary_id] = (totals[l.itinerary_id] || 0) + l.click_count
             }
             setClickTotals(totals)
+          }
+
+          // Build used counts per itinerary
+          if (usedData) {
+            const uCounts: Record<number, number> = {}
+            for (const row of usedData) {
+              uCounts[row.itinerary_id] = (uCounts[row.itinerary_id] || 0) + 1
+            }
+            setUsedCounts(uCounts)
           }
 
           // Fetch 5 most recent reviews with reviewer username
@@ -535,6 +546,11 @@ export default function DashboardPage() {
                           {(clickTotals[itinerary.id] ?? 0) > 0 && (
                             <span className="text-xs text-gray-500 flex items-center gap-1">
                               🔗 {clickTotals[itinerary.id]} click{clickTotals[itinerary.id] === 1 ? '' : 's'}
+                            </span>
+                          )}
+                          {(usedCounts[itinerary.id] ?? 0) > 0 && (
+                            <span className="text-xs text-green-600 flex items-center gap-1">
+                              ✓ {usedCounts[itinerary.id]} used
                             </span>
                           )}
                         </div>
