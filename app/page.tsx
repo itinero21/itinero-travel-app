@@ -84,6 +84,12 @@ export default function Home() {
                     Browse
                   </Link>
                   <Link
+                    href="/following"
+                    className="text-gray-600 hover:text-gray-900 px-4 py-2.5 text-[15px] font-medium transition-colors"
+                  >
+                    Following
+                  </Link>
+                  <Link
                     href="/saved"
                     className="text-gray-600 hover:text-gray-900 px-4 py-2.5 text-[15px] font-medium transition-colors"
                   >
