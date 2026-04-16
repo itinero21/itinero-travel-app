@@ -178,6 +178,14 @@ export default function ProfilePage() {
                     Go to Dashboard
                   </Link>
                 )}
+                {userProfile.role === 'explorer' && userProfile.username && (
+                  <Link
+                    href={`/traveller/${userProfile.username}`}
+                    className="border border-gray-200 text-gray-700 px-6 py-2.5 rounded-full text-[15px] font-medium hover:bg-gray-50 transition-colors"
+                  >
+                    View public profile
+                  </Link>
+                )}
                 <button
                   onClick={() => setEditing(true)}
                   className="bg-[#2C2C2C] text-white px-6 py-2.5 rounded-full text-[15px] font-medium hover:bg-[#1a1a1a] transition-colors"
